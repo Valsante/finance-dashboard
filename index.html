@@ -387,6 +387,99 @@ function parseCamt(xmlText){
   }
   return {added, accountsTouched};
 }
+/* ================= CSV-Import (flexibel, Auto-Erkennung) ================= */
+function parseCsvRows(text){
+  const lines = text.split(/\r?\n/).filter(l=>l.trim());
+  const sample = lines.slice(0,10).join('\n');
+  const counts = {';':(sample.match(/;/g)||[]).length, ',':(sample.match(/,/g)||[]).length, '\t':(sample.match(/\t/g)||[]).length};
+  const delim = Object.keys(counts).reduce((a,b)=>counts[b]>counts[a]?b:a,';');
+  const rows=[]; let row=[], cur='', q=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(q){
+      if(ch==='"'){ if(text[i+1]==='"'){cur+='"';i++;} else q=false; }
+      else cur+=ch;
+    } else {
+      if(ch==='"') q=true;
+      else if(ch===delim){ row.push(cur); cur=''; }
+      else if(ch==='\n'){ row.push(cur); rows.push(row); row=[]; cur=''; }
+      else if(ch==='\r'){ }
+      else cur+=ch;
+    }
+  }
+  if(cur.length||row.length){ row.push(cur); rows.push(row); }
+  return rows.filter(r=>r.some(c=>c.trim()!==''));
+}
+function parseNum(s){
+  if(s==null) return NaN;
+  s=String(s).trim().replace(/[’' \s]/g,'');
+  if(!s) return NaN;
+  let neg=false;
+  if(/^\(.*\)$/.test(s)){ neg=true; s=s.slice(1,-1); }
+  if(/-$/.test(s)){ neg=true; s=s.replace(/-$/,''); }
+  const hasC=s.includes(','), hasD=s.includes('.');
+  if(hasC&&hasD){ if(s.lastIndexOf(',')>s.lastIndexOf('.')){ s=s.replace(/\./g,'').replace(',','.'); } else { s=s.replace(/,/g,''); } }
+  else if(hasC){ s=s.replace(',','.'); }
+  let v=parseFloat(s.replace(/[^0-9.\-]/g,''));
+  if(isNaN(v)) return NaN;
+  return neg?-Math.abs(v):v;
+}
+function parseCsvDate(s){
+  s=String(s||'').trim();
+  let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m=s.match(/^(\d{1,2})[.\/](\d{1,2})[.\/](\d{2,4})/);
+  if(m){ let y=m[3]; if(y.length===2) y='20'+y; return `${y}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`; }
+  return '';
+}
+function findCol(headers, patterns){
+  for(const p of patterns){ for(let i=0;i<headers.length;i++){ if(p.test(headers[i])) return i; } }
+  return -1;
+}
+function parseCsv(text, fname){
+  const rows = parseCsvRows(text);
+  if(!rows.length) throw new Error('CSV leer');
+  const kw = /(datum|date|valuta|buchung|betrag|amount|umsatz|belast|gutschr|soll|haben|debit|credit|text|beschreib|mitteil|zahlungs|empf|auftrag|iban|konto|referenz|avis|details|verwendung|gegen)/i;
+  let hi=-1, best=0;
+  for(let i=0;i<Math.min(rows.length,25);i++){ const sc=rows[i].filter(c=>kw.test(c)).length; if(sc>best){best=sc;hi=i;} }
+  if(hi<0) throw new Error('CSV-Kopfzeile nicht erkannt');
+  const H = rows[hi].map(c=>c.trim());
+  const iDate = findCol(H,[/buchungsdatum/i,/^datum$/i,/datum|date/i,/valuta/i]);
+  const iAmt  = findCol(H,[/^betrag/i,/betrag|amount|umsatz/i]);
+  const iDeb  = findCol(H,[/belast|soll|debit|abgang/i]);
+  const iCred = findCol(H,[/gutschr|haben|credit|zugang/i]);
+  const iText = findCol(H,[/buchungstext|beschreib|verwendung|mitteil|zahlungsgrund|avis|details|^text$|narrative|description/i]);
+  const iName = findCol(H,[/empf|auftrag|beg.nst|gegenpartei|^name$|payee/i]);
+  const iIban = findCol(H,[/gegen.*iban|^iban$|iban/i]);
+  if(iDate<0 || (iAmt<0 && iDeb<0 && iCred<0)) throw new Error('CSV: Datum-/Betragsspalte nicht gefunden');
+  const acctName = (fname||'CSV').replace(/\.[^.]+$/,'').slice(0,24);
+  const acctId = 'CSV:'+acctName;
+  if(!DB.accounts[acctId]) DB.accounts[acctId] = {name:acctName, open:null};
+  let added=0; const seq={};
+  for(let r=hi+1;r<rows.length;r++){
+    const row=rows[r]; if(!row.some(c=>c.trim())) continue;
+    const date=parseCsvDate(row[iDate]); if(!date) continue;
+    let amt=NaN;
+    if(iAmt>=0 && String(row[iAmt]||'').trim()!=='') amt=parseNum(row[iAmt]);
+    if(isNaN(amt)){
+      const d=iDeb>=0?parseNum(row[iDeb]):NaN, cc=iCred>=0?parseNum(row[iCred]):NaN;
+      if(!isNaN(d)&&Math.abs(d)>0) amt=-Math.abs(d);
+      else if(!isNaN(cc)) amt=Math.abs(cc);
+    }
+    if(isNaN(amt)) continue;
+    const info=((iText>=0?String(row[iText]||''):'').trim()) || (iName>=0?String(row[iName]||'').trim():'');
+    const cp=iName>=0?String(row[iName]||'').trim():'';
+    const cpIban=iIban>=0?String(row[iIban]||'').replace(/\s/g,''):'';
+    const base=acctId+'|'+date+'|'+amt.toFixed(2)+'|'+info.slice(0,60);
+    seq[base]=(seq[base]||0)+1;
+    const key=base+'#'+seq[base];
+    if(seen.has(key)) continue; seen.add(key);
+    const [cat,sub,name,flow]=categorize(info,cp,cpIban,amt);
+    DB.tx.push([date, Math.round(amt*100)/100, acctId, channel(info), cat, sub, name, flow, info.slice(0,140), key]);
+    added++;
+  }
+  return {added, accountsTouched:[acctName]};
+}
+
 async function handleFiles(files){
   let tot=0, accs=new Set(), errs=[];
   for(const f of files){
@@ -397,12 +490,18 @@ async function handleFiles(files){
           if(nm.toLowerCase().endsWith('.xml')){
             const r = parseCamt(await zip.files[nm].async('string'));
             tot+=r.added; r.accountsTouched.forEach(a=>accs.add(a));
+          } else if(nm.toLowerCase().endsWith('.csv')){
+            const r = parseCsv(await zip.files[nm].async('string'), nm.split('/').pop());
+            tot+=r.added; r.accountsTouched.forEach(a=>accs.add(a));
           }
         }
       } else if(f.name.toLowerCase().endsWith('.xml')){
         const r = parseCamt(await f.text());
         tot+=r.added; r.accountsTouched.forEach(a=>accs.add(a));
-      } else errs.push(f.name+': kein XML/ZIP');
+      } else if(f.name.toLowerCase().endsWith('.csv')){
+        const r = parseCsv(await f.text(), f.name);
+        tot+=r.added; r.accountsTouched.forEach(a=>accs.add(a));
+      } else errs.push(f.name+': kein XML/CSV/ZIP');
     }catch(e){ errs.push(f.name+': '+e.message); }
   }
   DB.tx.sort((a,b)=>a[0]<b[0]?-1:1);
@@ -870,8 +969,8 @@ function renderAll(){
   document.getElementById('v-import').innerHTML=`
   <div class="card">
     <h3>${DB.tx.length?'Neue Kontoauszüge importieren':'Willkommen – lade deine Kontoauszüge'}</h3>${DB.tx.length?'':'<div class="note" style="margin-bottom:12px">Analysiere deine Ausgaben komplett lokal im Browser: Kategorisierung für Schweizer Händler, Vermögensverlauf, Budgets, Ausreisser-Erkennung u.v.m. Es werden keine Daten hochgeladen.</div>'}
-    <div id="drop"><b>CAMT.053-Dateien hierher ziehen</b> (XML oder ZIP)<br><span class="small">oder klicken zum Auswählen. Duplikate werden erkannt – einfach den kompletten Export reinziehen.</span>
-    <input type="file" id="fileInp" multiple accept=".xml,.zip" style="display:none"></div>
+    <div id="drop"><b>CAMT.053- oder CSV-Dateien hierher ziehen</b> (XML, CSV oder ZIP)<br><span class="small">oder klicken zum Auswählen. Duplikate werden erkannt – einfach den kompletten Export reinziehen.</span>
+    <input type="file" id="fileInp" multiple accept=".xml,.zip,.csv" style="display:none"></div>
     <div style="margin-top:14px" class="flex">
       <button class="btn" onclick="saveUpdated()"> Aktualisierte Datei speichern</button>
       <button class="btn sec" onclick="exportCSV()">${I_DL} CSV exportieren</button>
