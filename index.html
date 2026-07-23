@@ -312,6 +312,13 @@ function channel(info){
   if(/^(Habenzins|Dividende|Spesen|Preis|VST|Kontoführung)/.test(info)) return 'Bank';
   return 'Sonstige';
 }
+function isPrivatePayer(s){
+  s=(s||'').trim(); if(!s) return false;
+  if(/\b(AG|GMBH|N\.?V|LTD|PTE|S\.?A\b|SARL|SÀRL|CORP|INC|CO\.|EIDG|KASSE|CASINO|PAYPAL|ADYEN|OPENAIR|CASHLESS|GEMEINDE|STADT|KANTON|VERSICHER|BANK|GENOSSENSCHAFT|STIFTUNG|VEREIN|LOHN|SAL[ÄA]R|RENTE|SBB|CFF|FFS|ZVV|VBZ|VBSG|POSTAUTO|MIGROS|COOP|DENNER|LIDL|ALDI|SPOTIFY|NETFLIX|GOOGLE|APPLE|AMAZON|UBER|DIGITEC|GALAXUS|SUMUP|WORLDLINE|CONCARDIS|TRUPPEN|RECHNUNGSWESEN)\b/i.test(s)) return false;
+  if(/^[A-ZÄÖÜ][A-Za-zÄÖÜäöü'’\-]+,\s*[A-ZÄÖÜ]/.test(s)) return true;
+  if(/^([A-ZÄÖÜ][A-Za-zÄÖÜäöü'’\-]{1,})(\s+[A-ZÄÖÜ][A-Za-zÄÖÜäöü'’\-]{1,}){1,3}/.test(s)) return true;
+  return false;
+}
 function categorize(info, cp, cpIban, amt){
   const debit = amt < 0;
   const name = merchantRaw(info, cp);
@@ -335,7 +342,7 @@ function categorize(info, cp, cpIban, amt){
       return ['Überweisung an Privatpersonen','E-Banking',cp,'expense'];
     return ['Sonstiges','Nicht zugeordnet',name,'expense'];
   } else {
-    if(info.startsWith('TWINT') && /\+41\d{9}/.test(info)) return ['TWINT von Privatpersonen','P2P-Eingang',name,'income'];
+    if((info.startsWith('TWINT') && /\+41\d{9}/.test(info)) || isPrivatePayer(name) || isPrivatePayer(cp)) return ['Private Rückzahlung','P2P-Eingang',name,'reimburse_private'];
     if(/capital\.com/i.test(hay)) return ['Sparen & Anlegen','Trading (Capital.com)','Capital.com','savings_return'];
     for(const [pat,main] of INCOME_RULES){
       if(new RegExp(pat,'i').test(hay)) return [main,main,name,'income'];
@@ -541,6 +548,7 @@ function aggregates(txs){
     const m = d.slice(0,7);
     if(!A.byMonth[m]) A.byMonth[m]={inc:0,exp:0,sav:0};
     if(flow==='transfer_internal') continue;
+    if(flow==='reimburse_private') continue;
     if(flow==='transfer_savings'||flow==='savings_return'){ A.sav-=amt; A.byMonth[m].sav-=amt; continue; }
     if(amt>0){ A.inc+=amt; A.byMonth[m].inc+=amt; A.incByCat[cat]=(A.incByCat[cat]||0)+amt; }
     else{
