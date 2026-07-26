@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="de" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -110,20 +110,18 @@ header h1::before{
 }
 header .sub{font-size:11.5px;color:var(--mut);margin-top:2px;font-variant-numeric:tabular-nums}
 nav{
-  display:flex;gap:2px;margin-left:auto;
+  display:flex;gap:2px;margin-left:auto;flex:0 0 auto;
   background:var(--inbg);border-radius:var(--r-md);padding:3px;
-  max-width:100%;overflow-x:auto;scrollbar-width:none;
-  scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;
 }
 nav::-webkit-scrollbar{display:none}
 nav button{
   background:transparent;border:0;color:var(--mut);
   padding:7px 13px;border-radius:var(--r-sm);cursor:pointer;
   font:inherit;font-size:12.5px;font-weight:600;white-space:nowrap;
-  scroll-snap-align:center;transition:color .16s,background .16s;
+  transition:color .16s,background .16s;
 }
 nav button:hover{color:var(--txt)}
-nav button.act{background:var(--surface);color:var(--acc);font-weight:700;box-shadow:var(--shadow)}
+nav button.act{background:var(--surface);color:var(--acc);box-shadow:var(--shadow)}
 #themeBtn{
   background:var(--inbg);border:0;color:var(--txt);
   border-radius:var(--r-md);padding:8px 11px;cursor:pointer;
@@ -357,7 +355,8 @@ html{scrollbar-width:thin;scrollbar-color:rgba(102,112,133,.35) transparent}
 @media(max-width:720px){
   header{padding:10px 12px;gap:10px}
   header h1{font-size:15px}
-  nav{width:100%;order:3;margin-left:0;border-radius:var(--r-md)}
+  nav{width:100%;order:3;margin-left:0;flex:1 1 100%;border-radius:var(--r-md);
+      overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
   #themeBtn{margin-left:auto}
   main{padding:12px 12px 96px}
   .card{border-radius:var(--r-lg)}
@@ -395,7 +394,7 @@ html{scrollbar-width:thin;scrollbar-color:rgba(102,112,133,.35) transparent}
 <body>
 <div class="bgfx" aria-hidden="true"><i></i><i></i><i></i></div>
 <header>
-  <div><h1>Finanz-Dashboard</h1><div class="sub" id="subline"></div></div>
+  <div><h1>Finanz-Dashboard</h1><div class="sub" id="subline"></div><div class="sub" id="saveState"></div></div>
   <nav id="nav"></nav>
   <button id="themeBtn" title="Hell/Dunkel">◐</button>
 </header>
@@ -423,15 +422,36 @@ html{scrollbar-width:thin;scrollbar-color:rgba(102,112,133,.35) transparent}
     <input type="checkbox" id="edRule" style="width:auto"> Als Regel speichern (gilt für alle &amp; künftige Importe)</label>
   <div class="dlgRow"><button class="btn sec" onclick="editDlg.close()">Abbrechen</button><button class="btn" id="edSave">Übernehmen</button></div>
 </div></dialog>
-<script type="application/json" id="dataset">{"accounts":{},"ownExternal":{},"tx":[],"budgets":{},"customRules":[],"settings":{"theme":"light","goalMonthly":null}}</script>
+<script type="application/json" id="dataset">{"accounts":{},"ownExternal":{},"tx":[],"budgets":{},"customRules":[],"settings":{"theme":"dark","goalMonthly":null,"expMode":"net","cashMode":"separate","autosave":true}}</script>
 <script>
 /* ================= Datenmodell ================= */
+const LS_KEY = 'camt-finanz-dashboard-v1';
 let DB = JSON.parse(document.getElementById('dataset').textContent);
+let usedLocal = false;
+try{
+  const raw = localStorage.getItem(LS_KEY);
+  if(raw){
+    const loc = JSON.parse(raw);
+    if(loc && Array.isArray(loc.tx) && loc.tx.length >= (DB.tx||[]).length){ DB = loc; usedLocal = true; }
+  }
+}catch(e){}
 DB.budgets = DB.budgets || {};
 DB.customRules = DB.customRules || [];
-DB.settings = DB.settings || {theme:'light', goalMonthly:null};
+DB.settings = Object.assign({theme:'dark', goalMonthly:null, expMode:'net', cashMode:'separate', autosave:true}, DB.settings || {});
 let dirty = false;
-function markDirty(){ dirty=true; document.getElementById('saveHint').style.display='block'; }
+function autosave(){
+  if(!DB.settings.autosave) return false;
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(DB)); return true; }
+  catch(e){ DB.settings.autosave=false; toast('Auto-Speichern fehlgeschlagen (Speicher voll?) - bitte Datei manuell sichern.'); return false; }
+}
+function markDirty(){
+  dirty = true;
+  const saved = autosave();
+  const hint = document.getElementById('saveHint');
+  if(hint) hint.style.display = saved ? 'none' : 'block';
+  const badge = document.getElementById('saveState');
+  if(badge) badge.textContent = saved ? 'automatisch gespeichert' : 'ungespeichert';
+}
 const CHF = v => (v<0?'−':'') + Math.abs(v).toLocaleString('de-CH',{minimumFractionDigits:2,maximumFractionDigits:2});
 const CHF0 = v => (v<0?'−':'') + Math.abs(v).toLocaleString('de-CH',{maximumFractionDigits:0});
 const esc = s => (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -763,6 +783,7 @@ async function handleFiles(files){
   DB.tx.sort((a,b)=>a[0]<b[0]?-1:1);
   if(tot>0) markDirty();
   renderAll();
+  if(tot>0) showView('uebersicht');
   toast(`${tot} neue Transaktionen importiert${accs.size?' ('+[...accs].join(', ')+')':''}. ${errs.length?' '+errs.join('; '):''}`);
 }
 function saveUpdated(){
@@ -791,27 +812,56 @@ function setPreset(p){
   renderAll();
 }
 function aggregates(txs){
-  const A = {inc:0, exp:0, sav:0, byCat:{}, bySub:{}, byMonth:{}, incByCat:{}, merch:{}, monthsCatExp:{}, byDay:{}, nByCat:{}};
+  const A = {inc:0, exp:0, sav:0, cash:0, p2pOut:0, p2pIn:0, nInternal:0,
+             byCat:{}, bySub:{}, byMonth:{}, incByCat:{}, merch:{},
+             monthsCatExp:{}, byDay:{}, nByCat:{}};
+  const netP2P  = DB.settings.expMode  !== 'gross';   // P2P mit Rueckzahlungen verrechnen
+  const cashSep = DB.settings.cashMode !== 'gross';   // Bargeldbezug nicht als Konsum werten
   for(const t of txs){
     const [d,amt,acct,ch,cat,sub,name,flow] = t;
     const m = d.slice(0,7);
-    if(!A.byMonth[m]) A.byMonth[m]={inc:0,exp:0,sav:0};
-    if(flow==='transfer_internal') continue;
-    if(flow==='reimburse_private') continue;
-    if(flow==='transfer_savings'||flow==='savings_return'){ A.sav-=amt; A.byMonth[m].sav-=amt; continue; }
-    if(amt>0){ A.inc+=amt; A.byMonth[m].inc+=amt; A.incByCat[cat]=(A.incByCat[cat]||0)+amt; }
-    else{
-      A.exp-=amt; A.byMonth[m].exp-=amt;
-      A.byCat[cat]=(A.byCat[cat]||0)-amt; A.nByCat[cat]=(A.nByCat[cat]||0)+1;
-      const sk=cat+'||'+sub; A.bySub[sk]=(A.bySub[sk]||0)-amt;
-      A.byDay[d]=(A.byDay[d]||0)-amt;
-      if(!['TWINT an Privatpersonen','Bargeldbezug','Überweisung an Privatpersonen'].includes(cat)){
-        if(!A.merch[name]) A.merch[name]={n:0,tot:0,cat};
-        A.merch[name].n++; A.merch[name].tot-=amt;
-      }
-      if(!A.monthsCatExp[m]) A.monthsCatExp[m]={};
-      A.monthsCatExp[m][cat]=(A.monthsCatExp[m][cat]||0)-amt;
+    if(!A.byMonth[m]) A.byMonth[m]={inc:0,exp:0,sav:0,cash:0,p2p:0};
+    const M = A.byMonth[m];
+
+    // Umbuchung zwischen eigenen Konten - nie eine Ausgabe
+    if(flow==='transfer_internal'){ A.nInternal++; continue; }
+
+    // Sparen/Anlegen wird separat ausgewiesen, nicht als Konsum
+    if(flow==='transfer_savings'||flow==='savings_return'){ A.sav-=amt; M.sav-=amt; continue; }
+
+    // Rueckzahlung von Privatpersonen - verrechnet sich mit gesendetem P2P,
+    // zaehlt nie als Einnahme
+    if(flow==='reimburse_private'){ A.p2pIn+=amt; M.p2p-=amt; continue; }
+
+    if(amt>0){ A.inc+=amt; M.inc+=amt; A.incByCat[cat]=(A.incByCat[cat]||0)+amt; continue; }
+
+    const v = -amt;
+
+    // Bargeldbezug: Geld wechselt die Form, nicht den Besitzer
+    if(cat==='Bargeldbezug'){ A.cash+=v; M.cash+=v; if(cashSep) continue; }
+    // Geld an Privatpersonen: erst der ungedeckte Rest ist eine echte Ausgabe
+    else if(cat==='TWINT an Privatpersonen'||cat==='\u00dcberweisung an Privatpersonen'){
+      A.p2pOut+=v; M.p2p+=v; if(netP2P) continue;
     }
+
+    A.exp+=v; M.exp+=v;
+    A.byCat[cat]=(A.byCat[cat]||0)+v; A.nByCat[cat]=(A.nByCat[cat]||0)+1;
+    A.bySub[cat+'||'+sub]=(A.bySub[cat+'||'+sub]||0)+v;
+    A.byDay[d]=(A.byDay[d]||0)+v;
+    if(!['TWINT an Privatpersonen','Bargeldbezug','\u00dcberweisung an Privatpersonen'].includes(cat)){
+      if(!A.merch[name]) A.merch[name]={n:0,tot:0,cat};
+      A.merch[name].n++; A.merch[name].tot+=v;
+    }
+    if(!A.monthsCatExp[m]) A.monthsCatExp[m]={};
+    A.monthsCatExp[m][cat]=(A.monthsCatExp[m][cat]||0)+v;
+  }
+  A.p2pNet = A.p2pOut - A.p2pIn;
+  // outflow = alles was das Konto wirklich verlassen hat (ohne Sparen & interne Uebertraege).
+  // exp = reiner Konsum. Die Differenz sind Bargeld und ungedecktes P2P.
+  A.outflow = A.exp + (cashSep ? A.cash : 0) + (netP2P ? A.p2pNet : 0);
+  for(const mk of Object.keys(A.byMonth)){
+    const M = A.byMonth[mk];
+    M.outflow = M.exp + (cashSep ? M.cash : 0) + (netP2P ? M.p2p : 0);
   }
   A.months = Object.keys(A.byMonth).sort();
   A.nMonths = Math.max(1, A.months.length);
@@ -857,7 +907,7 @@ function nav(){
     const cur=document.documentElement.dataset.theme==='dark'?'light':'dark';
     document.documentElement.dataset.theme=cur; DB.settings.theme=cur; markDirty(); renderAll();
   };
-  if(DB.settings.theme==='dark'){ document.documentElement.dataset.theme='dark'; }
+  document.documentElement.dataset.theme = DB.settings.theme==='light' ? 'light' : 'dark';
 }
 function showView(id){
   activeView=id;
@@ -877,11 +927,17 @@ function periodBar(){
    <select id="selFrom"><option value="">von …</option>${ms.map(m=>`<option ${S.from===m?'selected':''}>${m}</option>`).join('')}</select>
    <select id="selTo"><option value="">bis …</option>${ms.map(m=>`<option ${S.to===m?'selected':''}>${m}</option>`).join('')}</select>
    <button class="tglbtn ${S.noOutliers?'on':''}" id="olToggle" title="Ungewöhnlich hohe Einzelausgaben aus allen Statistiken ausblenden">Ohne Ausreisser</button>
+   <button class="tglbtn ${DB.settings.cashMode==='gross'?'on':''}" id="cashToggle" title="Bancomat-Bez\u00fcge als Konsum-Ausgabe werten. Aus = separat ausgewiesen.">Bargeld = Ausgabe</button>
+   <button class="tglbtn ${DB.settings.expMode!=='gross'?'on':''}" id="p2pToggle" title="Geld an Privatpersonen mit deren R\u00fcckzahlungen verrechnen, statt es voll als Ausgabe zu z\u00e4hlen.">P2P verrechnen</button>
    <span class="small" id="periodInfo"></span>`;
   bar.querySelectorAll('.seg button').forEach(b=>b.onclick=()=>setPreset(b.dataset.p));
   document.getElementById('selFrom').onchange=e=>{S.from=e.target.value||null;S.preset='';renderAll();};
   document.getElementById('selTo').onchange=e=>{S.to=e.target.value||null;S.preset='';renderAll();};
   document.getElementById('olToggle').onclick=()=>{S.noOutliers=!S.noOutliers;renderAll();};
+  document.getElementById('cashToggle').onclick=()=>{
+    DB.settings.cashMode = DB.settings.cashMode==='gross' ? 'separate' : 'gross'; markDirty(); renderAll(); };
+  document.getElementById('p2pToggle').onclick=()=>{
+    DB.settings.expMode = DB.settings.expMode==='gross' ? 'net' : 'gross'; markDirty(); renderAll(); };
 }
 let SPARKS={};
 function drawSparks(){ for(const [id,[d,c]] of Object.entries(SPARKS)) spark(id,d,c); }
@@ -971,7 +1027,7 @@ function renderAll(){
   const A=aggregates(txs);
   const AF=aggregates(DB.tx);
   const B=balanceSeries();
-  const net=A.inc-A.exp;
+  const net=A.inc-A.outflow;
   const visible=Object.values(B.per).reduce((s,p)=>s+p.final,0);
   const range = DB.tx.length? fmtD(DB.tx[0][0])+' – '+fmtD(DB.tx[DB.tx.length-1][0]) : '';
   document.getElementById('subline').textContent=`${DB.tx.length.toLocaleString('de-CH')} Transaktionen${range?' · '+range:''}`;
@@ -981,7 +1037,7 @@ function renderAll(){
   const SPIKES=monthSpikes(A);
 
   /* ---------- Übersicht ---------- */
-  const mNet=A.months.map(m=>A.byMonth[m].inc-A.byMonth[m].exp);
+  const mNet=A.months.map(m=>A.byMonth[m].inc-A.byMonth[m].outflow);
   const mExp=A.months.map(m=>A.byMonth[m].exp);
   const mInc=A.months.map(m=>A.byMonth[m].inc);
   const lastM=A.months[A.months.length-1], prevM=A.months[A.months.length-2];
@@ -1001,7 +1057,7 @@ function renderAll(){
   <div class="grid g4">
     <div class="card"><h3>Einnahmen</h3><div class="kpi big-num"><span class="cu" data-v="${A.inc}">${CHF0(A.inc)}</span> <small>CHF</small></div>
       <div class="delta mut">Ø ${CHF0(A.inc/A.nMonths)}/Monat</div><canvas class="spark" id="sp1"></canvas></div>
-    <div class="card"><h3>Ausgaben</h3><div class="kpi big-num"><span class="cu" data-v="${A.exp}">${CHF0(A.exp)}</span> <small>CHF</small></div>
+    <div class="card"><h3>Ausgaben \u00b7 Konsum</h3><div class="kpi big-num"><span class="cu" data-v="${A.exp}">${CHF0(A.exp)}</span> <small>CHF</small></div>
       <div class="delta ${dExp<=0?'pos':'neg'}">${prevM?`${dExp<=0?'▼':'▲'} ${CHF0(Math.abs(dExp))} vs. Vormonat`:''}</div><canvas class="spark" id="sp2"></canvas></div>
     <div class="card"><h3>Netto gespart</h3><div class="kpi big-num" style="color:var(--acc)"><span class="cu" data-v="${net}">${CHF0(net)}</span> <small>CHF</small></div>
       <div class="delta mut">Sparquote ${A.inc? (100*net/A.inc).toFixed(1):'–'} %</div><canvas class="spark" id="sp3"></canvas></div>
@@ -1060,7 +1116,7 @@ function renderAll(){
   const topCats=catsSorted.slice(0,8).map(c=>c[0]);
   let moHtml=`<div class="card" style="overflow-x:auto"><h3>Monatsmatrix</h3><table><tr><th>Monat</th><th class="r">Einnahmen</th><th class="r">Ausgaben</th><th class="r">Δ Vormonat</th><th class="r">Netto</th><th class="r">In Anlagen</th>${topCats.map(c=>`<th class="r" title="${esc(c)}">${ico(c)} ${esc(c.slice(0,10))}</th>`).join('')}</tr>`;
   A.months.forEach((m,ix)=>{
-    const d=A.byMonth[m]; const nm=d.inc-d.exp;
+    const d=A.byMonth[m]; const nm=d.inc-d.outflow;
     const pv=ix>0?A.byMonth[A.months[ix-1]].exp:null;
     const dd=pv!==null?d.exp-pv:null;
     moHtml+=`<tr><td><b>${fmtM(m)}</b></td><td class="r">${CHF0(d.inc)}</td><td class="r">${CHF0(d.exp)}</td>
@@ -1192,7 +1248,7 @@ function renderAll(){
   const gi=document.getElementById('goalInp');
   if(gi){ gi.onchange=()=>{ DB.settings.goalMonthly=parseFloat(gi.value)||null; markDirty(); renderAll(); showView('budget'); };
     const g=DB.settings.goalMonthly;
-    if(g){ const hit=A.months.filter(m=>(A.byMonth[m].inc-A.byMonth[m].exp)>=g).length;
+    if(g){ const hit=A.months.filter(m=>(A.byMonth[m].inc-A.byMonth[m].outflow)>=g).length;
       document.getElementById('goalStat').innerHTML=`In <b>${hit}/${A.months.length}</b> Monaten erreicht · Ø Netto ${CHF0(net/A.nMonths)} CHF/Monat`; } }
 
   /* ---------- Spezial ---------- */
@@ -1379,6 +1435,355 @@ document.getElementById('edSave').onclick=()=>{
   } else { t[4]=cat; t[5]=sub; }
   markDirty(); editDlg.close(); renderAll(); showView('transaktionen');
 };
+
+/* ================= Erweiterungen ================= */
+
+/* --- Wie eine Buchung in die Kennzahlen einfliesst --- */
+const NEUTRAL_P2P = ['TWINT an Privatpersonen','\u00dcberweisung an Privatpersonen'];
+function txKind(t){
+  const cat = t[4], flow = t[7];
+  if(flow==='transfer_internal')  return ['intern','Umbuchung zwischen eigenen Konten'];
+  if(flow==='transfer_savings'||flow==='savings_return') return ['sparen','Sparen & Anlegen'];
+  if(flow==='reimburse_private')  return ['p2p','R\u00fcckzahlung von Privatperson'];
+  if(cat==='Bargeldbezug')        return ['bargeld','Bargeldbezug'];
+  if(NEUTRAL_P2P.includes(cat))   return ['p2p','Geld an Privatperson'];
+  return t[1] >= 0 ? ['einnahme',''] : ['ausgabe',''];
+}
+function countsAsExpense(t){
+  const k = txKind(t)[0];
+  if(k==='ausgabe') return true;
+  if(k==='bargeld') return DB.settings.cashMode==='gross';
+  if(k==='p2p')     return DB.settings.expMode==='gross' && t[1] < 0;
+  return false;
+}
+
+/* --- Nach jedem Render die Zusatz-Bausteine einh\u00e4ngen --- */
+const _renderAll_base = renderAll;
+renderAll = function(){
+  _renderAll_base.apply(this, arguments);
+  try{ injectBreakdown(); }catch(e){ console.warn('breakdown', e); }
+  try{ injectImportExtras(); }catch(e){ console.warn('import', e); }
+  const badge = document.getElementById('saveState');
+  if(badge && !badge.textContent) badge.textContent = DB.settings.autosave ? 'automatisch gespeichert' : 'Auto-Speichern aus';
+};
+
+/* --- Karte: was z\u00e4hlt als Ausgabe und was nicht --- */
+function injectBreakdown(){
+  const host = document.getElementById('v-uebersicht');
+  if(!host || !DB.tx.length) return;
+  const raw = fTx();
+  const ol  = new Set(computeOutliers(raw).map(o=>o.t[9]));
+  const A   = aggregates(S.noOutliers ? raw.filter(t=>!ol.has(t[9])) : raw);
+  const cashCounts = DB.settings.cashMode==='gross';
+  const p2pCounts  = DB.settings.expMode==='gross';
+  const row = (label, val, note, counts) =>
+    '<tr><td><b>'+label+'</b><div class="small">'+note+'</div></td>'+
+    '<td class="r"><b>'+CHF0(val)+'</b></td>'+
+    '<td class="r"><span class="tag" style="background:'+(counts?'var(--chip)':'var(--inbg)')+';color:'+(counts?'var(--chiptxt)':'var(--mut)')+'">'+
+    (counts?'z\u00e4hlt':'separat')+'</span></td></tr>';
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.id = 'breakdownCard';
+  card.style.marginTop = '14px';
+  card.innerHTML =
+    '<h3>Was z\u00e4hlt als Ausgabe?</h3><table>' +
+    row('Konsum-Ausgaben', A.exp, 'Waren und Dienstleistungen', true) +
+    row('Bargeldbez\u00fcge', A.cash, cashCounts?'als Ausgabe gewertet':'Verwendung nicht nachvollziehbar', cashCounts) +
+    row('P2P netto', A.p2pNet, CHF0(A.p2pOut)+' gesendet \u2212 '+CHF0(A.p2pIn)+' zur\u00fcckerhalten', p2pCounts) +
+    row('Sparen &amp; Anlegen', A.sav, 'wechselt nur das Konto, kein Konsum', false) +
+    '<tr><td><b>Interne \u00dcbertr\u00e4ge</b><div class="small">'+A.nInternal+' Buchungen zwischen eigenen Konten</div></td>'+
+    '<td class="r mut">\u2013</td><td class="r"><span class="tag" style="background:var(--inbg);color:var(--mut)">ignoriert</span></td></tr>' +
+    '<tr><td><b>Geldabfluss gesamt</b><div class="small">Basis f\u00fcr Netto und Sparquote</div></td>'+
+    '<td class="r"><b>'+CHF0(A.outflow)+'</b></td><td></td></tr>' +
+    '</table><div class="note">Umbuchungen zwischen deinen eigenen Konten sind nie eine Ausgabe. ' +
+    'Geld an Privatpersonen wird mit deren R\u00fcckzahlungen verrechnet \u2013 wer f\u00fcr andere vorstreckt, ' +
+    'h\u00e4tte sonst k\u00fcnstlich hohe Ausgaben. Beides l\u00e4sst sich oben in der Zeitraum-Leiste umschalten.</div>';
+  host.appendChild(card);
+}
+
+/* --- Import-Seite: Autosave, Demodaten, Regel-Editor --- */
+function injectImportExtras(){
+  const host = document.getElementById('v-import');
+  if(!host) return;
+  const box = document.createElement('div');
+  box.className = 'card'; box.style.marginTop = '14px'; box.id = 'importExtras';
+  box.innerHTML =
+    '<h3>Speichern</h3>' +
+    '<div class="flex">' +
+      '<button class="tglbtn '+(DB.settings.autosave?'on':'')+'" id="asToggle">Auto-Speichern im Browser</button>' +
+      '<button class="btn sec sm" id="asClear">Browser-Speicher leeren</button>' +
+      '<span class="small" id="asInfo"></span>' +
+    '</div>' +
+    '<div class="note">Mit Auto-Speichern bleibt dein Stand in diesem Browser erhalten \u2013 du musst die Datei ' +
+    'nicht mehr nach jedem Import ersetzen. Der Download bleibt als Backup und f\u00fcr den Wechsel auf ein anderes Ger\u00e4t.</div>' +
+    (DB.tx.length ? '' :
+      '<h3 style="margin-top:18px">Ausprobieren</h3>' +
+      '<div class="flex"><button class="btn sec" id="demoBtn">Beispieldaten laden</button>' +
+      '<span class="small">18 Monate erfundene Buchungen \u2013 inkl. Umbuchungen, Bargeld und P2P</span></div>') +
+    '<h3 style="margin-top:18px">Eigene Regel anlegen</h3>' +
+    '<div class="controls">' +
+      '<input type="text" id="rPat" placeholder="Suchmuster, z.B. fitnesspark" style="flex:1 1 200px">' +
+      '<input type="text" id="rCat" placeholder="Kategorie" list="rCatList" style="flex:1 1 160px">' +
+      '<input type="text" id="rSub" placeholder="Unterkategorie" style="flex:1 1 160px">' +
+      '<button class="btn" id="rAdd">Regel speichern</button>' +
+    '</div><datalist id="rCatList">' +
+    [...new Set(DB.tx.map(t=>t[4]))].sort().map(c=>'<option value="'+esc(c)+'">').join('') +
+    '</datalist><div id="rPreview" class="small"></div>';
+  host.appendChild(box);
+
+  const info = document.getElementById('asInfo');
+  try{ const b = new Blob([localStorage.getItem(LS_KEY)||'']).size;
+       info.textContent = b ? Math.round(b/1024)+' KB im Browser gespeichert' : 'noch nichts gespeichert'; }catch(e){}
+
+  document.getElementById('asToggle').onclick = () => {
+    DB.settings.autosave = !DB.settings.autosave;
+    if(!DB.settings.autosave){ try{ localStorage.removeItem(LS_KEY); }catch(e){} }
+    markDirty(); renderAll(); showView('import');
+  };
+  document.getElementById('asClear').onclick = () => {
+    if(!confirm('Browser-Speicher leeren? Die Daten in dieser Datei bleiben erhalten.')) return;
+    try{ localStorage.removeItem(LS_KEY); }catch(e){}
+    toast('Browser-Speicher geleert.'); renderAll(); showView('import');
+  };
+  const demo = document.getElementById('demoBtn');
+  if(demo) demo.onclick = loadDemo;
+
+  const pat = document.getElementById('rPat');
+  const prev = document.getElementById('rPreview');
+  const refresh = () => {
+    const p = pat.value.trim();
+    if(!p){ prev.innerHTML = ''; return; }
+    let re; try{ re = new RegExp(p,'i'); }
+    catch(e){ prev.innerHTML = '<span class="neg">Ung\u00fcltiges Muster</span>'; return; }
+    const hits = DB.tx.filter(t => re.test(t[6]+' | '+t[8]));
+    const sum  = hits.reduce((s,t)=>s+Math.abs(t[1]),0);
+    prev.innerHTML = hits.length
+      ? '<b>'+hits.length+'</b> Buchungen betroffen \u00b7 '+CHF0(sum)+' CHF<div class="flex" style="margin-top:6px">'+
+        hits.slice(0,6).map(t=>'<span class="pill">'+esc(t[6].slice(0,24))+' \u00b7 '+CHF0(-t[1])+'</span>').join('')+'</div>'
+      : 'Keine Buchung trifft auf dieses Muster zu.';
+  };
+  pat.oninput = refresh; refresh();
+
+  document.getElementById('rAdd').onclick = () => {
+    const p = pat.value.trim(), c = document.getElementById('rCat').value.trim(), s = document.getElementById('rSub').value.trim();
+    if(!p || !c){ toast('Muster und Kategorie sind Pflicht.'); return; }
+    try{ new RegExp(p,'i'); }catch(e){ toast('Ung\u00fcltiges Suchmuster.'); return; }
+    DB.customRules.push([p, c, s || c]);
+    const n = applyRule(p, c, s || c);
+    markDirty(); renderAll(); showView('import');
+    toast('Regel gespeichert \u2013 '+n+' bestehende Buchungen neu zugeordnet.');
+  };
+}
+
+/* Regel auch r\u00fcckwirkend auf bestehende Buchungen anwenden */
+function applyRule(patStr, cat, sub){
+  const re = new RegExp(patStr,'i');
+  let n = 0;
+  for(const t of DB.tx){
+    if(t[7]==='transfer_internal') continue;
+    if(!re.test(t[6]+' | '+t[8])) continue;
+    t[4] = cat; t[5] = sub;
+    t[7] = cat==='Sparen & Anlegen' ? (t[1]<0?'transfer_savings':'savings_return')
+                                    : (t[1]<0?'expense':'income');
+    n++;
+  }
+  return n;
+}
+
+/* --- Beispieldaten zum Ausprobieren (deterministisch) --- */
+function loadDemo(){
+  if(DB.tx.length && !confirm('Es sind bereits Daten vorhanden. Beispieldaten trotzdem anh\u00e4ngen?')) return;
+  let seed = 20260726;
+  const rnd  = () => (seed = (seed*1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const pick = a => a[Math.floor(rnd()*a.length)];
+  const amt  = (lo,hi) => Math.round((lo + rnd()*(hi-lo))*20)/20;
+  const A1 = 'CH9300762011623852957', A2 = 'CH5604835012345678009';
+  DB.accounts[A1] = {name:'Privatkonto', open:null};
+  DB.accounts[A2] = {name:'Sparkonto',   open:null};
+  OWN_ANALYZED.add(A1); OWN_ANALYZED.add(A2);
+  const tx = [];
+  let k = 0;
+  const add = (date, v, iban, ch, cat, sub, name, flow, info) => {
+    const key = 'DEMO-' + (k++);
+    seen.add(key);
+    tx.push([date, Math.round(v*100)/100, iban, ch, cat, sub, name, flow, info || name, key]);
+  };
+  const iso = d => d.toISOString().slice(0,10);
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth()-17, 1);
+  const SHOPS = [['Migros','Supermarkt'],['Coop','Supermarkt'],['Denner','Supermarkt'],['Aldi','Supermarkt'],['Lidl','Supermarkt'],['Volg','Dorfladen']];
+  const FOOD  = [['Kebab Star','Kebab/Imbiss/Take-Away'],['Restaurant Sonne','Restaurant'],['Cafe Bar Central','Bar/Caf\u00e9'],['McDonald\u2019s','Fastfood'],['ZFV Mensa','Mensa/Uni-Verpflegung']];
+  const FRIENDS = ['Meier, Lukas','Weber, Sarah','Keller, Jonas','Brunner, Lea'];
+  for(let d = new Date(start); d < today; d.setDate(d.getDate()+1)){
+    const date = iso(d), dom = d.getDate(), dow = d.getDay();
+    if(dom === 25) add(date, 5200, A1, 'Gutschrift', 'Lohn', 'Lohn', 'Muster AG', 'income', 'Gutschrift Sal\u00e4r Muster AG');
+    if(dom === 26){
+      add(date, -1000, A1, 'E-Banking', 'Interner \u00dcbertrag', 'Zwischen eigenen Konten', 'Eigen\u00fcbertrag', 'transfer_internal', 'Zahlungsauftrag eigenes Konto');
+      add(date,  1000, A2, 'Gutschrift', 'Interner \u00dcbertrag', 'Zwischen eigenen Konten', 'Eigen\u00fcbertrag', 'transfer_internal', 'Gutschrift eigenes Konto');
+      add(date,  -300, A1, 'E-Banking', 'Sparen & Anlegen', 'Kaspar& (Sparen-App)', 'Kaspar& (Sparen-App)', 'transfer_savings', 'Verg\u00fctung Kaspar&');
+    }
+    if(dom === 1){
+      add(date, -12.95, A1, 'Debitkarte', 'Abos & Digital', 'Streaming/Software', 'Spotify', 'expense', 'Einkauf Debitkarte Spotify');
+      add(date, -17.90, A1, 'Debitkarte', 'Abos & Digital', 'Streaming/Software', 'Netflix', 'expense', 'Einkauf Debitkarte Netflix');
+      add(date, -79.00, A1, 'Debitkarte', 'Mobilit\u00e4t', '\u00d6V (Zug/Bus)', 'SBB/\u00d6V', 'expense', 'Einkauf Debitkarte SBB');
+    }
+    if(dom === 14 && d.getMonth() === 2) add(date, -71.40, A1, 'Debitkarte', 'Abos & Digital', 'VPN (Surfshark)', 'Surfshark', 'expense', 'Einkauf Debitkarte Surfshark');
+    if(rnd() < 0.55){ const s = pick(SHOPS); add(date, -amt(9,95), A1, 'Debitkarte', 'Lebensmittel & Haushalt', s[1], s[0], 'expense', 'Einkauf Debitkarte '+s[0]); }
+    if(rnd() < 0.30){ const f = pick(FOOD);  add(date, -amt(8,48), A1, 'Debitkarte', 'Gastronomie', f[1], f[0], 'expense', 'Einkauf Debitkarte '+f[0]); }
+    if(rnd() < 0.05) add(date, -amt(20,140), A1, 'Debitkarte', 'Shopping', pick(['Kleidung','Elektronik','Warenhaus/Sport']), pick(['Zalando','Digitec Galaxus','Decathlon']), 'expense', 'Einkauf Debitkarte Shopping');
+    if(rnd() < 0.04) add(date, -amt(40,120), A1, 'Debitkarte', 'Gesundheit', 'Arzt/Apotheke', pick(['Amavita','Coiffeur Style']), 'expense', 'Einkauf Debitkarte Gesundheit');
+    if(rnd() < 0.06) add(date, -(rnd()<0.5?100:200), A1, 'Bancomat', 'Bargeldbezug', 'Bancomat', 'Bancomat Bahnhof', 'expense', 'Bezug Bancomat Bahnhof');
+    if(rnd() < 0.07) add(date, -amt(15,180), A1, 'TWINT', 'TWINT an Privatpersonen', 'P2P-Zahlung', pick(FRIENDS), 'expense', 'TWINT Belastung +41791234567');
+    if(rnd() < 0.06) add(date,  amt(15,180), A1, 'TWINT', 'Private R\u00fcckzahlung', 'P2P-Eingang', pick(FRIENDS), 'reimburse_private', 'TWINT Gutschrift +41791234567');
+    if(dow === 5 && rnd() < 0.12) add(date, -amt(180,900), A1, 'Debitkarte', 'Reisen', pick(['Unterkunft','Fl\u00fcge','Unterwegs im Ausland']), pick(['Booking.com','EasyJet','Trip.com']), 'expense', 'Einkauf Debitkarte Reisen');
+  }
+  tx.sort((a,b)=> a[0] < b[0] ? -1 : 1);
+  DB.accounts[A1].open = [tx[0][0], 4200];
+  DB.accounts[A2].open = [tx[0][0], 8000];
+  DB.tx = DB.tx.concat(tx);
+  DB.tx.sort((a,b)=> a[0] < b[0] ? -1 : 1);
+  markDirty(); renderAll(); showView('uebersicht');
+  toast(tx.length + ' Beispielbuchungen geladen. Mit \u00abAlle Daten l\u00f6schen\u00bb wieder entfernen.');
+}
+
+/* --- Transaktionsliste: mehr Filter, sortierbare Spalten, Mehrfachauswahl --- */
+const TXF = { page:0, sort:'d', dir:-1, sel:new Set(), pp:50 };
+const KIND_LBL = {ausgabe:'Ausgabe', einnahme:'Einnahme', intern:'intern', sparen:'Sparen', bargeld:'Bargeld', p2p:'P2P'};
+
+renderTxTable = function(){
+  const v = document.getElementById('v-transaktionen');
+  if(!v) return;
+  const cats = [...new Set(DB.tx.map(t=>t[4]))].sort();
+  const accs = Object.entries(DB.accounts);
+  const keep = id => { const e = document.getElementById(id); return e ? e.value : ''; };
+  const kq = keep('fSearch'), kc = keep('fCat'), ka = keep('fAcc'), kf = keep('fFlow');
+  const kmin = keep('fMin'), kmax = keep('fMax'), kd1 = keep('fFrom'), kd2 = keep('fTo');
+  v.innerHTML = '<div class="card">' +
+    '<div class="controls">' +
+      '<input type="search" id="fSearch" placeholder="Suche H\u00e4ndler, Text \u2026" value="'+esc(kq)+'">' +
+      '<select id="fCat"><option value="">Alle Kategorien</option>' +
+        cats.map(c=>'<option '+(c===kc?'selected':'')+'>'+esc(c)+'</option>').join('') + '</select>' +
+      '<select id="fAcc"><option value="">Alle Konten</option>' +
+        accs.map(([ib,a])=>'<option value="'+esc(ib)+'" '+(ib===ka?'selected':'')+'>'+esc(a.name)+'</option>').join('') + '</select>' +
+      '<select id="fFlow"><option value="">Alle Typen</option>' +
+        [['ausgabe','Nur echte Ausgaben'],['einnahme','Einnahmen'],['bargeld','Bargeldbez\u00fcge'],
+         ['p2p','P2P mit Privatpersonen'],['sparen','Sparen & Anlegen'],['intern','Interne \u00dcbertr\u00e4ge']]
+        .map(([v2,l])=>'<option value="'+v2+'" '+(v2===kf?'selected':'')+'>'+l+'</option>').join('') + '</select>' +
+      '<input type="number" id="fMin" placeholder="min CHF" value="'+esc(kmin)+'" style="width:110px">' +
+      '<input type="number" id="fMax" placeholder="max CHF" value="'+esc(kmax)+'" style="width:110px">' +
+      '<input type="text" id="fFrom" placeholder="von JJJJ-MM" value="'+esc(kd1)+'" style="width:130px">' +
+      '<input type="text" id="fTo" placeholder="bis JJJJ-MM" value="'+esc(kd2)+'" style="width:130px">' +
+      '<button class="btn sec sm" id="fReset">Zur\u00fccksetzen</button>' +
+      '<button class="btn sec sm" onclick="exportCSV()">'+I_DL+' CSV</button>' +
+    '</div>' +
+    '<div id="bulkBar" class="controls" style="display:none">' +
+      '<span class="pill info" id="bulkCount"></span>' +
+      '<input type="text" id="bCat" placeholder="neue Kategorie" list="bCatList" style="flex:1 1 160px">' +
+      '<input type="text" id="bSub" placeholder="Unterkategorie" style="flex:1 1 160px">' +
+      '<button class="btn" id="bApply">Auswahl umkategorisieren</button>' +
+      '<button class="btn sec sm" id="bClear">Auswahl aufheben</button>' +
+      '<datalist id="bCatList">'+cats.map(c=>'<option value="'+esc(c)+'">').join('')+'</datalist>' +
+    '</div>' +
+    '<div id="txBody"></div>' +
+    '<div class="pager"><button id="pPrev">\u2039</button><span id="pInfo"></span><button id="pNext">\u203a</button></div>' +
+  '</div>';
+  ['fSearch','fCat','fAcc','fFlow','fMin','fMax','fFrom','fTo'].forEach(id => {
+    document.getElementById(id).oninput = () => { TXF.page = 0; drawTx(); };
+  });
+  document.getElementById('fReset').onclick = () => { TXF.page=0; TXF.sel.clear(); renderTxTable(); };
+  document.getElementById('pPrev').onclick = () => { TXF.page = Math.max(0, TXF.page-1); drawTx(); };
+  document.getElementById('pNext').onclick = () => { TXF.page++; drawTx(); };
+  document.getElementById('bClear').onclick = () => { TXF.sel.clear(); drawTx(); };
+  document.getElementById('bApply').onclick = () => {
+    const c = document.getElementById('bCat').value.trim(), s = document.getElementById('bSub').value.trim();
+    if(!c){ toast('Bitte eine Kategorie angeben.'); return; }
+    let n = 0;
+    for(const t of DB.tx){ if(!TXF.sel.has(t[9])) continue;
+      t[4] = c; t[5] = s || c;
+      t[7] = c==='Sparen & Anlegen' ? (t[1]<0?'transfer_savings':'savings_return') : (t[1]<0?'expense':'income');
+      n++; }
+    TXF.sel.clear(); markDirty(); renderAll(); showView('transaktionen');
+    toast(n + ' Buchungen umkategorisiert.');
+  };
+  drawTx();
+};
+
+txFiltered = function(){
+  const g = id => (document.getElementById(id)?.value || '').trim();
+  const q = g('fSearch').toLowerCase(), fc = g('fCat'), fa = g('fAcc'), ff = g('fFlow');
+  const mn = parseFloat(g('fMin')), mx = parseFloat(g('fMax'));
+  const d1 = g('fFrom'), d2 = g('fTo');
+  return DB.tx.filter(t => {
+    if(fc && t[4] !== fc) return false;
+    if(fa && t[2] !== fa) return false;
+    if(ff && txKind(t)[0] !== ff) return false;
+    const a = Math.abs(t[1]);
+    if(!isNaN(mn) && a < mn) return false;
+    if(!isNaN(mx) && a > mx) return false;
+    if(d1 && t[0].slice(0,d1.length) < d1) return false;
+    if(d2 && t[0].slice(0,d2.length) > d2) return false;
+    if(q && !((t[6]+' '+t[8]+' '+t[4]+' '+t[5]).toLowerCase().includes(q))) return false;
+    return true;
+  });
+};
+
+function txSort(col){
+  if(TXF.sort === col) TXF.dir = -TXF.dir; else { TXF.sort = col; TXF.dir = col==='d' ? -1 : 1; }
+  drawTx();
+}
+
+drawTx = function(){
+  let rows = txFiltered();
+  const dir = TXF.dir;
+  const key = {d: t=>t[0], n: t=>t[6].toLowerCase(), c: t=>t[4].toLowerCase(), a: t=>Math.abs(t[1])}[TXF.sort] || (t=>t[0]);
+  rows = [...rows].sort((x,y) => { const kx = key(x), ky = key(y); return kx < ky ? -dir : kx > ky ? dir : 0; });
+  const maxP = Math.max(1, Math.ceil(rows.length / TXF.pp));
+  if(TXF.page >= maxP) TXF.page = maxP - 1;
+  if(TXF.page < 0) TXF.page = 0;
+  const page = rows.slice(TXF.page*TXF.pp, TXF.page*TXF.pp + TXF.pp);
+  const sum  = rows.reduce((s,t) => s + t[1], 0);
+  const idx  = new Map(DB.tx.map((t,i) => [t[9], i]));
+  const arrow = c => TXF.sort===c ? (TXF.dir>0 ? ' \u25b2' : ' \u25bc') : '';
+  const allSel = page.length && page.every(t => TXF.sel.has(t[9]));
+  document.getElementById('txBody').innerHTML =
+    '<table><tr>' +
+    '<th style="width:26px"><input type="checkbox" id="selAll" '+(allSel?'checked':'')+' style="width:auto"></th>' +
+    '<th class="clickable" onclick="txSort(\'d\')">Datum'+arrow('d')+'</th>' +
+    '<th class="clickable" onclick="txSort(\'n\')">H\u00e4ndler'+arrow('n')+'</th>' +
+    '<th class="clickable" onclick="txSort(\'c\')">Kategorie'+arrow('c')+'</th>' +
+    '<th>Typ</th>' +
+    '<th class="r clickable" onclick="txSort(\'a\')">Betrag (CHF)'+arrow('a')+'</th><th></th></tr>' +
+    page.map(t => {
+      const [kind, why] = txKind(t);
+      const counts = countsAsExpense(t);
+      const gi = idx.get(t[9]);
+      return '<tr title="'+esc(t[8])+(why?' \u2014 '+why:'')+'">' +
+        '<td><input type="checkbox" class="txSel" data-k="'+esc(t[9])+'" '+(TXF.sel.has(t[9])?'checked':'')+' style="width:auto"></td>' +
+        '<td>'+fmtD(t[0])+'</td>' +
+        '<td><b>'+esc(t[6].slice(0,38))+'</b><div class="small">'+esc(t[5])+'</div></td>' +
+        '<td><span class="tag">'+ico(t[4])+' '+esc(t[4])+'</span></td>' +
+        '<td><span class="tag" style="background:'+(counts?'var(--chip)':'var(--inbg)')+';color:'+(counts?'var(--chiptxt)':'var(--mut)')+'">'+KIND_LBL[kind]+'</span></td>' +
+        '<td class="r"><b class="'+(t[1]>=0?'pos':'neg')+'">'+CHF(t[1])+'</b></td>' +
+        '<td><button class="btn sec sm" onclick="openEdit('+gi+')" title="Umkategorisieren">'+I_EDIT+'</button></td></tr>';
+    }).join('') + '</table>';
+  document.getElementById('pInfo').textContent =
+    'Seite '+(TXF.page+1)+'/'+maxP+' \u00b7 '+rows.length+' Transaktionen \u00b7 Summe '+CHF(sum);
+  document.querySelectorAll('.txSel').forEach(cb => cb.onchange = () => {
+    cb.checked ? TXF.sel.add(cb.dataset.k) : TXF.sel.delete(cb.dataset.k);
+    updateBulk();
+  });
+  const sa = document.getElementById('selAll');
+  if(sa) sa.onchange = () => { page.forEach(t => sa.checked ? TXF.sel.add(t[9]) : TXF.sel.delete(t[9])); drawTx(); };
+  updateBulk();
+};
+
+function updateBulk(){
+  const bar = document.getElementById('bulkBar');
+  if(!bar) return;
+  bar.style.display = TXF.sel.size ? 'flex' : 'none';
+  const c = document.getElementById('bulkCount');
+  if(c) c.textContent = TXF.sel.size + ' ausgew\u00e4hlt';
+}
 
 nav(); renderAll(); runCountUps(document.getElementById('v-uebersicht')); if(!DB.tx.length) showView('import');
 </script>
